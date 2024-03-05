@@ -58,6 +58,10 @@ var plrID2 *uint64
 //var wgParse sync.WaitGroup
 var wgDem sync.WaitGroup
 
+const maxDemosUnziping = 10
+
+var currentDemosUnziping = 0
+
 var demofiles []string
 
 var statsScorePlr1 []uint64
@@ -210,11 +214,18 @@ func uncompress(path string, name string) string {
 	//mutexCompress.Lock()
 	tmpname := createTmpName()
 
+	for currentDemosUnziping >= maxDemosUnziping {
+		time.Sleep(time.Millisecond * 500)
+	}
+
+	currentDemosUnziping += 1
 	err := archiver.DecompressFile(path, filepath.Join(os.TempDir(), name+tmpname))
 	if err != nil {
 		log.Println("failed to decompress file: ", err)
+		currentDemosUnziping -= 1
 		return ""
 	}
+	currentDemosUnziping -= 1
 	//mutexCompress.Unlock()
 
 	return filepath.Join(os.TempDir(), name+tmpname)
