@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,15 +36,6 @@ func createTmpName() string {
 	return tmpname
 }
 
-/*func avgArrayUint64(a []uint64) float64 {
-	var sum float64 = 0
-	for _, b := range a {
-		sum += float64(b)
-	}
-	sum /= float64(len(a))
-	return sum
-}*/
-
 func check(e error) {
 	if e != nil {
 		log.Panic(e)
@@ -57,28 +49,19 @@ var resultFile *string
 var plrID1 *uint64
 var plrID2 *uint64
 
-//var wgParse sync.WaitGroup
 var wgDem sync.WaitGroup
 
 var isCanceling bool = false
 
-const maxDemosUnziping = 5
-var currentDemosUnziping = 0
+const maxDemosUnziping uint32 = 5
+var currentDemosUnziping uint32
 
-var totalDemoFiles = 0
-var currentCompletedDemoFiles = 0
-var usedDemoFiles = 0
-var errorDemoFiles = 0
+var totalDemoFiles uint32
+var currentCompletedDemoFiles uint32
+var usedDemoFiles uint32
+var errorDemoFiles uint32
 
 var demofiles []string
-
-/*var statsScorePlr1 []uint64
-var statsDamagePlr1 []uint64
-var statsKillsPlr1 []uint64
-var statsAssistsPlr1 []uint64
-var statsDeathsPlr1 []uint64
-var statsMVPsPlr1 []uint64
-var statsPingPlr1 []uint64*/
 
 var statsScorePlr1 uint64
 var statsDamagePlr1 uint64
@@ -93,14 +76,6 @@ var statsAssistedFlashsPlr1 uint64
 var statsAttackerBlindsPlr1 uint64
 var statsNoScopesPlr1 uint64
 var statsThroughSmokesPlr1 uint64
-
-/*var statsScorePlr2 []uint64
-var statsDamagePlr2 []uint64
-var statsKillsPlr2 []uint64
-var statsAssistsPlr2 []uint64
-var statsDeathsPlr2 []uint64
-var statsMVPsPlr2 []uint64
-var statsPingPlr2 []uint64*/
 
 var statsScorePlr2 uint64
 var statsDamagePlr2 uint64
@@ -122,7 +97,7 @@ func main() {
 
 	dir := flag.String("dir", "", "directory containing demo files")
 
-	recurse = flag.Bool("recurse", false, "recurse into subdirectories")
+	recurse = flag.Bool("r", false, "recurse into subdirectories")
 
 	resultFile = flag.String("f", "", "result file")
 
@@ -133,6 +108,7 @@ func main() {
 
 	go func() {
         sig := <-sigs
+
         fmt.Println()
         fmt.Println(sig)
 		log.Println("canceling...")
@@ -147,11 +123,7 @@ func main() {
 	if *plrID1 == 0 {
 		log.Panicln("plrID1 not set")
 	}
-	//if *plrID2 == 0 {
-	//	log.Panicln("plrID2 not set")
-	//}
 
-	//wgParse.Add(1)
 	dirParse(filepath.Dir(*dir + "/"))
 
 	for currentDemosUnziping != 0 && currentCompletedDemoFiles < totalDemoFiles {
@@ -160,9 +132,6 @@ func main() {
 	}
 	wgDem.Wait()
 	PrintProgress()
-
-	//wgParse.Wait()
-	//wgDem.Wait()
 
 	var statScorePlr1 float64 = 0
 	var statDamagePlr1 float64 = 0
@@ -192,14 +161,6 @@ func main() {
 	var statNoScopesPlr2 float64 = 0
 	var statThroughSmokesPlr2 float64 = 0
 
-	/*statScorePlr1 = avgArrayUint64(statsScorePlr1)
-	statDamagePlr1 = avgArrayUint64(statsDamagePlr1)
-	statKillsPlr1 = avgArrayUint64(statsKillsPlr1)
-	statAssistsPlr1 = avgArrayUint64(statsAssistsPlr1)
-	statDeathsPlr1 = avgArrayUint64(statsDeathsPlr1)
-	statMVPsPlr1 = avgArrayUint64(statsMVPsPlr1)
-	statPingPlr1 = avgArrayUint64(statsPingPlr1)*/
-
 	statScorePlr1 = float64(statsScorePlr1) / float64(usedDemoFiles)
 	statDamagePlr1 = float64(statsDamagePlr1) / float64(usedDemoFiles)
 	statKillsPlr1 = float64(statsKillsPlr1) / float64(usedDemoFiles)
@@ -215,14 +176,6 @@ func main() {
 	statThroughSmokesPlr1 = float64(statsThroughSmokesPlr1) / float64(usedDemoFiles)
 
 	if *plrID2 != 0 {
-		/*statScorePlr2 = avgArrayUint64(statsScorePlr2)
-		statDamagePlr2 = avgArrayUint64(statsDamagePlr2)
-		statKillsPlr2 = avgArrayUint64(statsKillsPlr2)
-		statAssistsPlr2 = avgArrayUint64(statsAssistsPlr2)
-		statDeathsPlr2 = avgArrayUint64(statsDeathsPlr2)
-		statMVPsPlr2 = avgArrayUint64(statsMVPsPlr2)
-		statPingPlr2 = avgArrayUint64(statsPingPlr2)*/
-
 		statScorePlr2 = float64(statsScorePlr2) / float64(usedDemoFiles)
 		statDamagePlr2 = float64(statsDamagePlr2) / float64(usedDemoFiles)
 		statKillsPlr2 = float64(statsKillsPlr2) / float64(usedDemoFiles)
@@ -307,66 +260,52 @@ func main() {
 }
 
 func dirParse(path string) {
-	//defer wgParse.Done()
 	osDir, err := os.ReadDir(path)
 	check(err)
 
 	for _, entry := range osDir {
-		if entry.IsDir() {
-			if *recurse {
-				//wgParse.Add(1)
-				//go dirParse(filepath.Dir(filepath.Join(path, entry.Name())))
-				dirParse(filepath.Dir(filepath.Join(path, entry.Name())))
-			}
+		if entry.IsDir() && *recurse {
+			dirParse(filepath.Join(path, entry.Name() + "/"))
 		} else {
 			wgDem.Add(1)
 			go demPrepare(filepath.Join(path, entry.Name()), entry.Name())
 			totalDemoFiles++
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Microsecond * 100)
 	}
 }
 
-//var mutexCompress sync.Mutex
-
 func uncompress(path string, name string) string {
-	//mutexCompress.Lock()
-	tmpname := createTmpName()
-
 	for currentDemosUnziping >= maxDemosUnziping {
 		time.Sleep(time.Millisecond * 500)
 	}
+
+	tmpname := createTmpName()
 
 	if isCanceling {
 		return "isCanceling"
 	}
 
-	currentDemosUnziping += 1
+	atomic.AddUint32(&currentDemosUnziping, 1)
 	err := archiver.DecompressFile(path, filepath.Join(os.TempDir(), name+tmpname))
 	if err != nil {
 		log.Println("failed to decompress file: ", err)
-		currentDemosUnziping -= 1
+		atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
 		return ""
 	}
-	currentDemosUnziping -= 1
-	//mutexCompress.Unlock()
 
+	atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
 	return filepath.Join(os.TempDir(), name+tmpname)
 }
 
 func PrintProgress() {
 	str := "\n"
-	str += "Progress: " + strconv.Itoa(currentCompletedDemoFiles) + " / " + strconv.Itoa(totalDemoFiles) + " %" + strconv.FormatFloat(float64(currentCompletedDemoFiles) / float64(totalDemoFiles) * 100, 'f', 4, 64) + "\n"
-	str += "Total demos: " + strconv.Itoa(totalDemoFiles) + "\n"
-	str += "Current parsed: " + strconv.Itoa(currentCompletedDemoFiles) + "\n"
-	str += "Current used for stats: " + strconv.Itoa(usedDemoFiles) + "\n"
-	str += "Errors or duplicates: " + strconv.Itoa(errorDemoFiles) + "\n"
-	
-	//if (currentCompletedDemoFiles == totalDemoFiles) {
-	//	fmt.Print(str)
-	//} else if (currentCompletedDemoFiles % 5 == 0) {
-	//	fmt.Print(str)
-	//}
+	str += "Progress: " + strconv.Itoa(int(currentCompletedDemoFiles)) + " / " + strconv.Itoa(int(totalDemoFiles)) + " %" + strconv.FormatFloat(float64(currentCompletedDemoFiles) / float64(totalDemoFiles) * 100, 'f', 4, 64) + "\n"
+	str += "Total demos: " + strconv.Itoa(int(totalDemoFiles)) + "\n"
+	str += "Current parsed: " + strconv.Itoa(int(currentCompletedDemoFiles)) + "\n"
+	str += "Current used for stats: " + strconv.Itoa(int(usedDemoFiles)) + "\n"
+	str += "Errors or duplicates: " + strconv.Itoa(int(errorDemoFiles)) + "\n"
+
 	fmt.Println(str)
 }
 
@@ -381,7 +320,7 @@ func demPrepare(path string, name string) {
 
 		decompressed := uncompress(path, name)
 		if decompressed == "" {
-			errorDemoFiles++
+			atomic.AddUint32(&errorDemoFiles, 1)
 			return
 		} else if decompressed == "isCanceling" {
 			return
@@ -391,7 +330,7 @@ func demPrepare(path string, name string) {
 		demParse(decompressed)
 
 		log.Println("file parsed: ", name)
-		currentCompletedDemoFiles++
+		atomic.AddUint32(&currentCompletedDemoFiles, 1)
 
 		os.Remove(decompressed)
 	} else if ext == ".dem" {
@@ -401,82 +340,66 @@ func demPrepare(path string, name string) {
 
 		demParse(path)
 		log.Println("file parsed: ", name)
-		currentCompletedDemoFiles++
+		atomic.AddUint32(&currentCompletedDemoFiles, 1)
 	}
 }
 
 func appendStatsPlr(plr *common.Player) {
 	if plr.SteamID64 == *plrID1 {
-		/*statsScorePlr1 = append(statsScorePlr1, uint64(plr1.Score()))
-		statsDamagePlr1 = append(statsDamagePlr1, uint64(plr1.TotalDamage()))
-		statsKillsPlr1 = append(statsKillsPlr1, uint64(plr1.Kills()))
-		statsAssistsPlr1 = append(statsAssistsPlr1, uint64(plr1.Assists()))
-		statsDeathsPlr1 = append(statsDeathsPlr1, uint64(plr1.Deaths()))
-		statsMVPsPlr1 = append(statsMVPsPlr1, uint64(plr1.MVPs()))
-		statsPingPlr1 = append(statsPingPlr1, uint64(plr1.Ping()))*/
-
-		statsScorePlr1 += uint64(plr.Score())
-		statsDamagePlr1 += uint64(plr.TotalDamage())
-		statsKillsPlr1 += uint64(plr.Kills())
-		statsAssistsPlr1 += uint64(plr.Assists())
-		statsDeathsPlr1 += uint64(plr.Deaths())
-		statsMVPsPlr1 += uint64(plr.MVPs())
-		statsPingPlr1 += uint64(plr.Ping())
+		atomic.AddUint64(&statsScorePlr1, uint64(plr.Score()))
+		atomic.AddUint64(&statsDamagePlr1, uint64(plr.TotalDamage()))
+		atomic.AddUint64(&statsKillsPlr1, uint64(plr.Kills()))
+		atomic.AddUint64(&statsAssistsPlr1, uint64(plr.Assists()))
+		atomic.AddUint64(&statsDeathsPlr1, uint64(plr.Deaths()))
+		atomic.AddUint64(&statsMVPsPlr1, uint64(plr.MVPs()))
+		atomic.AddUint64(&statsPingPlr1, uint64(plr.Ping()))
 	} else if plr.SteamID64 == *plrID2 {
-		/*statsScorePlr2 = append(statsScorePlr2, uint64(plr2.Score()))
-		statsDamagePlr2 = append(statsDamagePlr2, uint64(plr2.TotalDamage()))
-		statsKillsPlr2 = append(statsKillsPlr2, uint64(plr2.Kills()))
-		statsAssistsPlr2 = append(statsAssistsPlr2, uint64(plr2.Assists()))
-		statsDeathsPlr2 = append(statsDeathsPlr2, uint64(plr2.Deaths()))
-		statsMVPsPlr2 = append(statsMVPsPlr2, uint64(plr2.MVPs()))
-		statsPingPlr2 = append(statsPingPlr2, uint64(plr2.Ping()))*/
-
-		statsScorePlr2 += uint64(plr.Score())
-		statsDamagePlr2 += uint64(plr.TotalDamage())
-		statsKillsPlr2 += uint64(plr.Kills())
-		statsAssistsPlr2 += uint64(plr.Assists())
-		statsDeathsPlr2 += uint64(plr.Deaths())
-		statsMVPsPlr2 += uint64(plr.MVPs())
-		statsPingPlr2 += uint64(plr.Ping())
+		atomic.AddUint64(&statsScorePlr2, uint64(plr.Score()))
+		atomic.AddUint64(&statsDamagePlr2, uint64(plr.TotalDamage()))
+		atomic.AddUint64(&statsKillsPlr2, uint64(plr.Kills()))
+		atomic.AddUint64(&statsAssistsPlr2, uint64(plr.Assists()))
+		atomic.AddUint64(&statsDeathsPlr2, uint64(plr.Deaths()))
+		atomic.AddUint64(&statsMVPsPlr2, uint64(plr.MVPs()))
+		atomic.AddUint64(&statsPingPlr2, uint64(plr.Ping()))
 	}
 }
 
 func appendStatKillsPlr(e *events.Kill) {
 	if e.Killer != nil && e.Killer.SteamID64 == *plrID1 {
-		statsPenetratedObjectsPlr1 += uint64(e.PenetratedObjects) 
+		atomic.AddUint64(&statsPenetratedObjectsPlr1, uint64(e.PenetratedObjects))
 		if e.IsHeadshot {
-			statsHeadShotsPlr1++
+			atomic.AddUint64(&statsHeadShotsPlr1, 1)
 		}
 		if e.AttackerBlind {
-			statsAttackerBlindsPlr1++
+			atomic.AddUint64(&statsAttackerBlindsPlr1, 1)
 		}
 		if e.NoScope {
-			statsNoScopesPlr1++
+			atomic.AddUint64(&statsNoScopesPlr1, 1)
 		}
 		if e.ThroughSmoke {
-			statsThroughSmokesPlr1++
+			atomic.AddUint64(&statsThroughSmokesPlr1, 1)
 		}
 	} else if e.Assister != nil && e.Assister.SteamID64 == *plrID1 {
 		if e.AssistedFlash {
-			statsAssistedFlashsPlr1++
+			atomic.AddUint64(&statsAssistedFlashsPlr1, 1)
 		}
 	} else if e.Killer != nil && e.Killer.SteamID64 == *plrID2 {
-		statsPenetratedObjectsPlr2 += uint64(e.PenetratedObjects) 
+		atomic.AddUint64(&statsPenetratedObjectsPlr2, uint64(e.PenetratedObjects))
 		if e.IsHeadshot {
-			statsHeadShotsPlr2++
+			atomic.AddUint64(&statsHeadShotsPlr2, 1)
 		}
 		if e.AttackerBlind {
-			statsAttackerBlindsPlr2++
+			atomic.AddUint64(&statsAttackerBlindsPlr2, 1)
 		}
 		if e.NoScope {
-			statsNoScopesPlr2++
+			atomic.AddUint64(&statsNoScopesPlr2, 1)
 		}
 		if e.ThroughSmoke {
-			statsThroughSmokesPlr2++
+			atomic.AddUint64(&statsThroughSmokesPlr2, 1)
 		}
 	} else if e.Assister != nil && e.Assister.SteamID64 == *plrID2 {
 		if e.AssistedFlash {
-			statsAssistedFlashsPlr2++
+			atomic.AddUint64(&statsAssistedFlashsPlr2, 1)
 		}
 	}
 }
@@ -485,7 +408,7 @@ func demParse(path string) {
 	f, err := os.Open(path)
 	if err != nil {
 		log.Println("failed to open demo file: ", err)
-		errorDemoFiles++
+		atomic.AddUint32(&errorDemoFiles, 1)
 	}
 	defer f.Close()
 
@@ -548,7 +471,7 @@ func demParse(path string) {
 			}
 		}
 		if demofound {
-			errorDemoFiles++
+			atomic.AddUint32(&errorDemoFiles, 1)
 			return
 		}
 		demofiles = append(demofiles, demoid)
@@ -581,10 +504,10 @@ func demParse(path string) {
 		if plr1 != nil && plr2 != nil {
 			appendStatsPlr(plr1)
 			appendStatsPlr(plr2)
-			usedDemoFiles++
+			atomic.AddUint32(&usedDemoFiles, 1)
 		} else if plr1 != nil && *plrID2 == 0 {
 			appendStatsPlr(plr1)
-			usedDemoFiles++
+			atomic.AddUint32(&usedDemoFiles, 1)
 		}
 	})
 
@@ -592,6 +515,6 @@ func demParse(path string) {
 	err = p.ParseToEnd()
 	if err != nil {
 		log.Println("failed to parse demo: ", err)
-		errorDemoFiles++
+		atomic.AddUint32(&errorDemoFiles, 1)
 	}
 }
