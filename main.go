@@ -279,14 +279,15 @@ func uncompress(path string, name string) string {
 	for currentDemosUnziping >= maxDemosUnziping {
 		time.Sleep(time.Millisecond * 500)
 	}
+	atomic.AddUint32(&currentDemosUnziping, 1)
 
 	tmpname := createTmpName()
 
 	if isCanceling {
+		atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
 		return "isCanceling"
 	}
 
-	atomic.AddUint32(&currentDemosUnziping, 1)
 	err := archiver.DecompressFile(path, filepath.Join(os.TempDir(), name+tmpname))
 	if err != nil {
 		log.Println("failed to decompress file: ", err)
