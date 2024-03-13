@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -11,13 +13,12 @@ import (
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs"
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/common"
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/events"
-
 	"github.com/mholt/archiver/v3"
 )
 
 var isCanceling bool = false
 
-const maxDemosUnziping uint32 = 5
+const maxDemosUnziping uint32 = 4 // 1 archive for approximately ~1 GB of RAM.
 var currentDemosUnziping uint32
 
 var totalDemoFiles uint32
@@ -29,28 +30,46 @@ var demofiles []string
 
 var PlrsStats []*PlrStats
 
-func uncompress(path string, name string) string {
+func uncompress(path string) *bytes.Buffer {
 	for currentDemosUnziping >= maxDemosUnziping {
 		time.Sleep(time.Millisecond * 500)
 	}
 	atomic.AddUint32(&currentDemosUnziping, 1)
 
-	tmpname := createTmpName()
-
 	if isCanceling {
 		atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
-		return "isCanceling"
+		return nil
 	}
 
-	err := archiver.DecompressFile(path, filepath.Join(os.TempDir(), name+tmpname))
+	// Open file
+	file, err := os.OpenFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		log.Println("failed to open file: ", err)
+		atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
+		return nil
+	}
+	defer file.Close()
+
+	// Create interface
+	iface, err := archiver.ByExtension(path)
+	if err != nil {
+		log.Println("failed to create interface: ", err)
+		atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
+		return nil
+	}
+	decomp := iface.(archiver.Decompressor)
+
+	// Create buffer and decompress to buffer
+	buf := new(bytes.Buffer)
+	err = decomp.Decompress(file, buf)
 	if err != nil {
 		log.Println("failed to decompress file: ", err)
 		atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
-		return ""
+		return nil
 	}
 
 	atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
-	return filepath.Join(os.TempDir(), name+tmpname)
+	return buf
 }
 
 func demPrepare(path string, name string) {
@@ -62,41 +81,42 @@ func demPrepare(path string, name string) {
 			return
 		}
 
-		decompressed := uncompress(path, name)
-		if decompressed == "" {
+		// Decompress file to buffer
+		decompressed := uncompress(path)
+		if decompressed == nil {
 			atomic.AddUint32(&errorDemoFiles, 1)
-			return
-		} else if decompressed == "isCanceling" {
 			return
 		}
 		log.Println("file decompressed: ", name)
 
+		// Parse buffer
 		demParse(decompressed)
 
 		log.Println("file parsed: ", name)
 		atomic.AddUint32(&currentCompletedDemoFiles, 1)
-
-		os.Remove(decompressed)
 	} else if ext == ".dem" {
 		if isCanceling {
 			return
 		}
 
-		demParse(path)
+		// Open file
+		file, err := os.OpenFile(path, os.O_RDONLY, 0)
+		if err != nil {
+			log.Println("failed to open file: ", err)
+			return
+		}
+		defer file.Close()
+
+		// Parse file
+		demParse(file)
+
 		log.Println("file parsed: ", name)
 		atomic.AddUint32(&currentCompletedDemoFiles, 1)
 	}
 }
 
-func demParse(path string) {
-	f, err := os.Open(path)
-	if err != nil {
-		log.Println("failed to open demo file: ", err)
-		atomic.AddUint32(&errorDemoFiles, 1)
-	}
-	defer f.Close()
-
-	p := demoinfocs.NewParser(f)
+func demParse(reader io.Reader) {
+	p := demoinfocs.NewParser(reader)
 	defer p.Close()
 
 	p.RegisterEventHandler(func(e events.Kill) {
@@ -165,25 +185,9 @@ func demParse(path string) {
 	})
 
 	// Parse to end
-	err = p.ParseToEnd()
+	err := p.ParseToEnd()
 	if err != nil {
 		log.Println("failed to parse demo: ", err)
 		atomic.AddUint32(&errorDemoFiles, 1)
 	}
-}
-
-func createTmpName() string {
-	tmpf, err := os.CreateTemp(os.TempDir(), "*")
-	if err != nil {
-		log.Println("failed to create temp file: ", err)
-		return ""
-	}
-	tmpname := filepath.Base(tmpf.Name())
-	tmpf.Close()
-	err = os.Remove(tmpf.Name())
-	if err != nil {
-		log.Println("failed to delete temp file: ", err)
-		return ""
-	}
-	return tmpname
 }
