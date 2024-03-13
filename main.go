@@ -19,6 +19,7 @@ func check(e error) {
 	}
 }
 
+var vertResult *bool
 var dir *string
 var recurse *bool
 var resultFile *string
@@ -32,9 +33,11 @@ func main() {
 	plrID4 := flag.Uint64("p4", 0, "SteamID64 of fourth player (not required)")
 	plrID5 := flag.Uint64("p5", 0, "SteamID64 of fifth player (not required)")
 
+	vertResult = flag.Bool("v", false, "display the result horizontally (compact and perhaps not beautiful)")
+
 	dir = flag.String("dir", "", "directory containing demo files")
-	recurse = flag.Bool("r", false, "recurse into subdirectories")
-	resultFile = flag.String("f", "", "result file")
+	recurse = flag.Bool("r", false, "recursion into subdirectories")
+	resultFile = flag.String("f", "", "results file")
 
 	flag.Parse()
 
@@ -115,7 +118,7 @@ func PrintProgress() {
 	str += "Total demos: " + strconv.Itoa(int(totalDemoFiles)) + "\n"
 	str += "Current parsed: " + strconv.Itoa(int(currentCompletedDemoFiles)) + "\n"
 	str += "Current used for stats: " + strconv.Itoa(int(usedDemoFiles)) + "\n"
-	str += "Errors or duplicates: " + strconv.Itoa(int(errorDemoFiles)) + "\n"
+	str += "Errors, duplicates or skips: " + strconv.Itoa(int(errorDemoFiles)) + "\n"
 
 	fmt.Println(str)
 }

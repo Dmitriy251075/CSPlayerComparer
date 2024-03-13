@@ -29,22 +29,44 @@ func PrintResults() {
 	fmt.Println("Avg Stats")
 	fmt.Println("Result from demofiles: ", *dir)
 
-	result := [][]string {
-		{"Players SteamID64:"}, // SteamID64Line 0
-		{"Players Name:"}, // NameLine 1
-		{"Avg Score:"}, // ScoreLine 2
-		{"Avg TotalDamage:"}, // TotalDamageLine 3
-		{"Avg Kills:"}, // KillsLine 4
-		{"Avg Assists:"}, // AssistsLine 5
-		{"Avg Deaths:"}, // DeathsLine 6
-		{"Avg MVPs:"}, // MVPsLine 7
-		{"Avg Ping:"}, // PingLine 8
-		{"Avg Kills Penetrated Objects:"}, // KillsPenetratedObjectsLine 9
-		{"Avg Kills Headshot:"}, // KillsHeadshotLine 10
-		{"Avg Kills Assisted Flashs:"}, // KillsAssistedFlashsLine 11
-		{"Avg Kills Attacker Blinds:"}, // KillsAttackerBlindsLine 12
-		{"Avg Kills No Scope:"}, // KillsNoScopeLine 13
-		{"Avg Kills Through Smoke:"}, // KillsThroughSmokeLine 14
+	var result [][]string
+
+	if *vertResult {
+		result = [][]string {
+			{"Player SteamID64:"}, // SteamID64Line 0
+			{"Player Name:"}, // NameLine 1
+			{"Score:"}, // ScoreLine 2
+			{"TotalDamage:"}, // TotalDamageLine 3
+			{"Kills:"}, // KillsLine 4
+			{"Assists:"}, // AssistsLine 5
+			{"Deaths:"}, // DeathsLine 6
+			{"MVPs:"}, // MVPsLine 7
+			{"Ping:"}, // PingLine 8
+			{"Kills Penetrated Objects:"}, // KillsPenetratedObjectsLine 9
+			{"Kills Headshot:"}, // KillsHeadshotLine 10
+			{"Kills Assisted Flashs:"}, // KillsAssistedFlashsLine 11
+			{"Kills Attacker Blinds:"}, // KillsAttackerBlindsLine 12
+			{"Kills No Scope:"}, // KillsNoScopeLine 13
+			{"Kills Through Smoke:"}, // KillsThroughSmokeLine 14
+		}
+	} else {
+		result = [][]string {
+			{"SteamID64"}, // SteamID64Line 0
+			{"Name"}, // NameLine 1
+			{"Score"}, // ScoreLine 2
+			{"Damage"}, // TotalDamageLine 3
+			{"Kills"}, // KillsLine 4
+			{"Assists"}, // AssistsLine 5
+			{"Deaths"}, // DeathsLine 6
+			{"MVPs"}, // MVPsLine 7
+			{"Ping"}, // PingLine 8
+			{"Kills\nPenetrated\nObjects"}, // KillsPenetratedObjectsLine 9
+			{"Kills\nHeadshot"}, // KillsHeadshotLine 10
+			{"Kills\nAssisted\nFlashs"}, // KillsAssistedFlashsLine 11
+			{"Kills\nAttacker\nBlinds"}, // KillsAttackerBlindsLine 12
+			{"Kills\nNo Scope"}, // KillsNoScopeLine 13
+			{"Kills\nThrough\nSmoke"}, // KillsThroughSmokeLine 14
+		}
 	}
 
 	for _, plr := range PlrsStats {
@@ -52,12 +74,29 @@ func PrintResults() {
 	}
 
 	tw := table.NewWriter()
-	for line := 0; line < len(result); line++ {
-		row := table.Row{result[line][0]}
-		for col := 1; col < len(result[line]); col++ {
-			row = append(row, result[line][col])
+
+	if *vertResult {
+		for line := 0; line < len(result); line++ {
+			row := table.Row{result[line][0]}
+			for col := 1; col < len(result[line]); col++ {
+				row = append(row, result[line][col])
+			}
+			tw.AppendRow(row)
 		}
-		tw.AppendRow(row)
+	} else {
+		rowHeader := table.Row{}
+		for line := 0; line < len(result); line++ {
+			rowHeader = append(rowHeader, result[line][0])
+		}
+		tw.AppendHeader(rowHeader)
+	
+		for col := 1; col < len(result[0]); col++ {
+			row := table.Row{}
+			for line := 0; line < len(result); line++ {
+				row = append(row, result[line][col])
+			}
+			tw.AppendRow(row)
+		}
 	}
 
 	str := tw.Render()
