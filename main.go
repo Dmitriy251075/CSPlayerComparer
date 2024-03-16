@@ -24,6 +24,9 @@ var dir *string
 var recurse *bool
 var resultFile *string
 
+var cacheDir *string
+var useCache *bool
+
 var wgDem sync.WaitGroup
 
 func main() {
@@ -38,6 +41,9 @@ func main() {
 	dir = flag.String("dir", "", "directory containing demo files")
 	recurse = flag.Bool("r", false, "recursion into subdirectories")
 	resultFile = flag.String("f", "", "results file")
+
+	cacheDir = flag.String("cd", "cache", "cache directory")
+	useCache = flag.Bool("c", true, "use cache")
 
 	flag.Parse()
 
@@ -63,13 +69,17 @@ func main() {
 	}
 
 	if *plrID1 == 0 && *plrID2 == 0 && *plrID3 == 0 && *plrID4 == 0 && *plrID5 == 0 {
-		log.Panicln("one of -p1, -p2, -p3, -p4, -p5 is required")
+		flag.PrintDefaults()
+		return
+		//log.Panicln("one of -p1, -p2, -p3, -p4, -p5 is required")
 	}
 
 	log.Println("dir: ", *dir+"/")
 
 	if *dir == "" {
-		log.Panicln("dir of demofiles not set")
+		flag.PrintDefaults()
+		return
+		//log.Panicln("dir of demofiles not set")
 	}
 
 	sigs := make(chan os.Signal, 1)

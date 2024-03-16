@@ -6,27 +6,29 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs"
-	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/common"
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/events"
 	"github.com/mholt/archiver/v3"
 )
 
 var isCanceling bool = false
 
-const maxDemosUnziping uint32 = 4 // 1 archive for approximately ~1 GB of RAM.
+const maxDemosUnziping uint32 = 6
 var currentDemosUnziping uint32
+
+const maxDemosUnziped uint32 = 6
+var currentDemosUnziped uint32
+
+const maxDemosParseing uint32 = maxDemosUnziped + 2
+var currentDemosParseing uint32
 
 var totalDemoFiles uint32
 var currentCompletedDemoFiles uint32
 var usedDemoFiles uint32
 var errorDemoFiles uint32
-
-var demofiles []string
 
 var PlrsStats []*PlrStats
 
@@ -69,6 +71,7 @@ func uncompress(path string) *bytes.Buffer {
 	}
 
 	atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
+	atomic.AddUint32(&currentDemosUnziped, 1)
 	return buf
 }
 
@@ -81,6 +84,29 @@ func demPrepare(path string, name string) {
 			return
 		}
 
+		dem := findDemoInMemByName(name)
+		if dem != nil {
+			log.Println("demo already parsed: ", path)
+			atomic.AddUint32(&errorDemoFiles, 1)
+			return
+		}
+
+		cache := loadDemoCache(name)
+		if cache != nil {
+			var AllPlrsStats []*PlrStats
+			AllPlrsStats = append(AllPlrsStats, cache.PlrsStats...)
+
+			addTargetsStats(AllPlrsStats[:])
+			
+			log.Println("file cached: ", name)
+			atomic.AddUint32(&currentCompletedDemoFiles, 1)
+			return
+		}
+
+		for currentDemosUnziped >= maxDemosUnziped {
+			time.Sleep(time.Millisecond * 500)
+		}
+
 		// Decompress file to buffer
 		decompressed := uncompress(path)
 		if decompressed == nil {
@@ -90,7 +116,12 @@ func demPrepare(path string, name string) {
 		log.Println("file decompressed: ", name)
 
 		// Parse buffer
-		demParse(decompressed)
+		IsOK := demParse(decompressed, path)
+		if !IsOK {
+			atomic.StoreUint32(&currentDemosUnziped, currentDemosUnziped - 1)
+			return
+		}
+		atomic.StoreUint32(&currentDemosUnziped, currentDemosUnziped - 1)
 
 		log.Println("file parsed: ", name)
 		atomic.AddUint32(&currentCompletedDemoFiles, 1)
@@ -108,80 +139,86 @@ func demPrepare(path string, name string) {
 		defer file.Close()
 
 		// Parse file
-		demParse(file)
+		IsOK := demParse(file, path)
+		if !IsOK {
+			return
+		}
 
 		log.Println("file parsed: ", name)
 		atomic.AddUint32(&currentCompletedDemoFiles, 1)
 	}
 }
 
-func demParse(reader io.Reader) {
+func demParse(reader io.Reader, path string) bool {
+	for currentDemosParseing >= maxDemosParseing {
+		time.Sleep(time.Millisecond * 500)
+	}
+	atomic.AddUint32(&currentDemosParseing, 1)
+
 	p := demoinfocs.NewParser(reader)
 	defer p.Close()
 
-	p.RegisterEventHandler(func(e events.Kill) {
-		for _, plrstat := range PlrsStats {
-			plrstat.appendStatKills(&e)
-		}
-	})
+	var AllPlrsStats []*PlrStats
 
-	p.RegisterEventHandler(func(e events.AnnouncementWinPanelMatch) {
+	RegAllPlrsStats := func() {
 		gs := p.GameState()
 
 		ct := gs.TeamCounterTerrorists()
 		t := gs.TeamTerrorists()
 
-		// Create a demo ID to remove duplicates from stats
-		demoid := strconv.Itoa(gs.TotalRoundsPlayed()) + "." + ct.ClanName() + "." + t.ClanName() + "-" + strconv.Itoa(gs.IngameTick()) + "-" + strconv.Itoa(ct.Score()) + "." + strconv.Itoa(t.Score())
-
-		demofound := false
-		for _, demo := range demofiles {
-			if demo == demoid {
-				demofound = true
-			}
-		}
-		if demofound {
-			atomic.AddUint32(&errorDemoFiles, 1)
-			return
-		}
-		demofiles = append(demofiles, demoid)
-
-		var Plrs []*common.Player
-
 		// CT
 		for _, plr := range ct.Members() {
-			for _, plrstat := range PlrsStats {
+			found := false
+			for _, plrstat := range AllPlrsStats {
 				if plr.SteamID64 == plrstat.SteamID64 {
-					Plrs = append(Plrs, plr)
+					found = true
+					plrstat.setStats(plr)
 				}
+			}
+			if (!found) {
+				pstats := PlrStats{SteamID64: plr.SteamID64}
+				pstats.setStats(plr)
+				AllPlrsStats = append(AllPlrsStats, &pstats)
 			}
 		}
 
 		// T
 		for _, plr := range t.Members() {
-			for _, plrstat := range PlrsStats {
+			found := false
+			for _, plrstat := range AllPlrsStats {
 				if plr.SteamID64 == plrstat.SteamID64 {
-					Plrs = append(Plrs, plr)
+					found = true
+					plrstat.setStats(plr)
 				}
 			}
-		}
-
-		foundPlrs := ""
-		for _, plr := range Plrs {
-			foundPlrs += " " + plr.Name
-		}
-		log.Println("found players:", foundPlrs)
-
-		if len(Plrs) == len(PlrsStats) {
-			for _, plr := range Plrs {
-				for _, plrstat := range PlrsStats {
-					if plr.SteamID64 == plrstat.SteamID64 {
-						plrstat.appendStats(plr)
-					}
-				}
+			if (!found) {
+				pstats := PlrStats{SteamID64: plr.SteamID64}
+				pstats.setStats(plr)
+				AllPlrsStats = append(AllPlrsStats, &pstats)
 			}
-			atomic.AddUint32(&usedDemoFiles, 1)
 		}
+	}
+
+	p.RegisterEventHandler(func(e events.RoundStart) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.RoundEndOfficial) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.Kill) {
+		for _, plrstat := range AllPlrsStats {
+			plrstat.appendStatKills(&e)
+		}
+	})
+
+	p.RegisterEventHandler(func(e events.OtherDeath) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.PlayerHurt) {
+		RegAllPlrsStats()
 	})
 
 	// Parse to end
@@ -189,5 +226,69 @@ func demParse(reader io.Reader) {
 	if err != nil {
 		log.Println("failed to parse demo: ", err)
 		atomic.AddUint32(&errorDemoFiles, 1)
+		atomic.StoreUint32(&currentDemosParseing, currentDemosParseing - 1)
+		return false
+	}
+
+	// Check demoid
+	demCache := findDemoInMemByDemoID(p)
+	if demCache != nil {
+		log.Println("demo already parsed: ", path)
+		atomic.AddUint32(&errorDemoFiles, 1)
+		atomic.StoreUint32(&currentDemosParseing, currentDemosParseing - 1)
+		return false
+	}
+
+	// Create demo cache
+	cache := createDemoCache(path, p, AllPlrsStats[:])
+	cache.saveToDisk()
+
+	addTargetsStats(AllPlrsStats[:])
+	
+	atomic.StoreUint32(&currentDemosParseing, currentDemosParseing - 1)
+	return true
+}
+
+func addTargetsStats(AllPlrsStats []*PlrStats) {
+	foundPlrs := ""
+	for _, plr := range AllPlrsStats {
+		foundPlrs += "\t" + plr.Name
+	}
+	log.Println("found players:", foundPlrs)
+
+	var PlrsResults []*PlrStats
+	for _, plrstat := range PlrsStats {
+		plr := PlrStats{SteamID64: plrstat.SteamID64}
+		PlrsResults = append(PlrsResults, &plr)
+	}
+
+	var countTargetInDemo = 0
+	for _, plrstat := range AllPlrsStats {
+		for _, plr := range PlrsResults {
+			if plr.SteamID64 == plrstat.SteamID64 {
+				countTargetInDemo++
+			}
+		}
+	}
+
+	if countTargetInDemo == len(PlrsResults) {
+		for _, plr := range AllPlrsStats {
+			for _, plrstat := range PlrsResults {
+				if plr.SteamID64 == plrstat.SteamID64 {
+					plrstat.appendStatsFromPlrStats(plr)
+				}
+			}
+		}
+		atomic.AddUint32(&usedDemoFiles, 1)
+	} else {
+		return
+	}
+
+	for _, plr := range PlrsResults {
+		for _, plrstat := range PlrsStats {
+			if plr.SteamID64 == plrstat.SteamID64 {
+				plrstat.appendStatsFromPlrStats(plr)
+			}
+		}
 	}
 }
