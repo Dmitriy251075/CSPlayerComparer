@@ -118,7 +118,7 @@ func dirParse(path string) {
 			go demPrepare(filepath.Join(path, entry.Name()), entry.Name())
 			totalDemoFiles++
 		}
-		time.Sleep(time.Microsecond * 100)
+		time.Sleep(time.Microsecond * 25)
 	}
 }
 

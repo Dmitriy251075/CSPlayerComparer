@@ -16,14 +16,14 @@ import (
 
 var isCanceling bool = false
 
-const maxDemosUnziping uint32 = 6
-var currentDemosUnziping uint32
+const maxDemosUnziping int32 = 6
+var currentDemosUnziping int32
 
-const maxDemosUnziped uint32 = 6
-var currentDemosUnziped uint32
+const maxDemosUnziped int32 = 6
+var currentDemosUnziped int32
 
-const maxDemosParseing uint32 = maxDemosUnziped + 2
-var currentDemosParseing uint32
+const maxDemosParseing int32 = maxDemosUnziped + 2
+var currentDemosParseing int32
 
 var totalDemoFiles uint32
 var currentCompletedDemoFiles uint32
@@ -34,12 +34,12 @@ var PlrsStats []*PlrStats
 
 func uncompress(path string) *bytes.Buffer {
 	for currentDemosUnziping >= maxDemosUnziping {
-		time.Sleep(time.Millisecond * 500)
+		time.Sleep(time.Millisecond * 100)
 	}
-	atomic.AddUint32(&currentDemosUnziping, 1)
+	atomic.AddInt32(&currentDemosUnziping, 1)
 
 	if isCanceling {
-		atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
+		atomic.AddInt32(&currentDemosUnziping, -1)
 		return nil
 	}
 
@@ -47,7 +47,7 @@ func uncompress(path string) *bytes.Buffer {
 	file, err := os.OpenFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		log.Println("failed to open file: ", err)
-		atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
+		atomic.AddInt32(&currentDemosUnziping, -1)
 		return nil
 	}
 	defer file.Close()
@@ -56,7 +56,7 @@ func uncompress(path string) *bytes.Buffer {
 	iface, err := archiver.ByExtension(path)
 	if err != nil {
 		log.Println("failed to create interface: ", err)
-		atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
+		atomic.AddInt32(&currentDemosUnziping, -1)
 		return nil
 	}
 	decomp := iface.(archiver.Decompressor)
@@ -66,12 +66,12 @@ func uncompress(path string) *bytes.Buffer {
 	err = decomp.Decompress(file, buf)
 	if err != nil {
 		log.Println("failed to decompress file: ", err)
-		atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
+		atomic.AddInt32(&currentDemosUnziping, -1)
 		return nil
 	}
 
-	atomic.StoreUint32(&currentDemosUnziping, currentDemosUnziping - 1)
-	atomic.AddUint32(&currentDemosUnziped, 1)
+	atomic.AddInt32(&currentDemosUnziping, -1)
+	atomic.AddInt32(&currentDemosUnziped, 1)
 	return buf
 }
 
@@ -80,13 +80,20 @@ func demPrepare(path string, name string) {
 
 	ext := filepath.Ext(path)
 	if ext == ".bz2" || ext == ".gz" {
-		if isCanceling {
-			return
-		}
-
 		dem := findDemoInMemByName(name)
 		if dem != nil {
 			log.Println("demo already parsed: ", path)
+			atomic.AddUint32(&errorDemoFiles, 1)
+			return
+		}
+
+		for currentDemosParseing >= maxDemosParseing {
+			time.Sleep(time.Millisecond * 100)
+		}
+		atomic.AddInt32(&currentDemosParseing, 1)
+
+		if isCanceling {
+			atomic.AddInt32(&currentDemosParseing, -1)
 			atomic.AddUint32(&errorDemoFiles, 1)
 			return
 		}
@@ -99,12 +106,14 @@ func demPrepare(path string, name string) {
 			addTargetsStats(AllPlrsStats[:])
 			
 			log.Println("file cached: ", name)
+			atomic.AddInt32(&currentDemosParseing, -1)
 			atomic.AddUint32(&currentCompletedDemoFiles, 1)
 			return
 		}
+		atomic.AddInt32(&currentDemosParseing, -1)
 
 		for currentDemosUnziped >= maxDemosUnziped {
-			time.Sleep(time.Millisecond * 500)
+			time.Sleep(time.Millisecond * 100)
 		}
 
 		// Decompress file to buffer
@@ -118,10 +127,10 @@ func demPrepare(path string, name string) {
 		// Parse buffer
 		IsOK := demParse(decompressed, path)
 		if !IsOK {
-			atomic.StoreUint32(&currentDemosUnziped, currentDemosUnziped - 1)
+			atomic.AddInt32(&currentDemosUnziped, -1)
 			return
 		}
-		atomic.StoreUint32(&currentDemosUnziped, currentDemosUnziped - 1)
+		atomic.AddInt32(&currentDemosUnziped, -1)
 
 		log.Println("file parsed: ", name)
 		atomic.AddUint32(&currentCompletedDemoFiles, 1)
@@ -151,9 +160,9 @@ func demPrepare(path string, name string) {
 
 func demParse(reader io.Reader, path string) bool {
 	for currentDemosParseing >= maxDemosParseing {
-		time.Sleep(time.Millisecond * 500)
+		time.Sleep(time.Millisecond * 100)
 	}
-	atomic.AddUint32(&currentDemosParseing, 1)
+	atomic.AddInt32(&currentDemosParseing, 1)
 
 	p := demoinfocs.NewParser(reader)
 	defer p.Close()
@@ -226,7 +235,7 @@ func demParse(reader io.Reader, path string) bool {
 	if err != nil {
 		log.Println("failed to parse demo: ", err)
 		atomic.AddUint32(&errorDemoFiles, 1)
-		atomic.StoreUint32(&currentDemosParseing, currentDemosParseing - 1)
+		atomic.AddInt32(&currentDemosParseing, -1)
 		return false
 	}
 
@@ -235,7 +244,7 @@ func demParse(reader io.Reader, path string) bool {
 	if demCache != nil {
 		log.Println("demo already parsed: ", path)
 		atomic.AddUint32(&errorDemoFiles, 1)
-		atomic.StoreUint32(&currentDemosParseing, currentDemosParseing - 1)
+		atomic.AddInt32(&currentDemosParseing, -1)
 		return false
 	}
 
@@ -245,7 +254,7 @@ func demParse(reader io.Reader, path string) bool {
 
 	addTargetsStats(AllPlrsStats[:])
 	
-	atomic.StoreUint32(&currentDemosParseing, currentDemosParseing - 1)
+	atomic.AddInt32(&currentDemosParseing, -1)
 	return true
 }
 
