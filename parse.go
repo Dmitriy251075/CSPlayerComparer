@@ -28,6 +28,7 @@ var currentDemosParseing int32
 var totalDemoFiles uint32
 var currentCompletedDemoFiles uint32
 var usedDemoFiles uint32
+var currentCachedDemoFiles uint32
 var errorDemoFiles uint32
 
 var PlrsStats []*PlrStats
@@ -78,40 +79,40 @@ func uncompress(path string) *bytes.Buffer {
 func demPrepare(path string, name string) {
 	defer wgDem.Done()
 
+	dem := findDemoInMemByName(name)
+	if dem != nil {
+		log.Println("demo already parsed: ", path)
+		atomic.AddUint32(&errorDemoFiles, 1)
+		return
+	}
+
+	for currentDemosParseing >= maxDemosParseing {
+		time.Sleep(time.Millisecond * 100)
+	}
+	atomic.AddInt32(&currentDemosParseing, 1)
+
+	if isCanceling {
+		atomic.AddInt32(&currentDemosParseing, -1)
+		atomic.AddUint32(&errorDemoFiles, 1)
+		return
+	}
+
+	cache := loadDemoCache(name)
+	if cache != nil {
+		var AllPlrsStats []*PlrStats
+		AllPlrsStats = append(AllPlrsStats, cache.PlrsStats...)
+
+		addTargetsStats(AllPlrsStats[:])
+			
+		log.Println("file cached: ", name)
+		atomic.AddInt32(&currentDemosParseing, -1)
+		atomic.AddUint32(&currentCachedDemoFiles, 1)
+		return
+	}
+	atomic.AddInt32(&currentDemosParseing, -1)
+
 	ext := filepath.Ext(path)
 	if ext == ".bz2" || ext == ".gz" {
-		dem := findDemoInMemByName(name)
-		if dem != nil {
-			log.Println("demo already parsed: ", path)
-			atomic.AddUint32(&errorDemoFiles, 1)
-			return
-		}
-
-		for currentDemosParseing >= maxDemosParseing {
-			time.Sleep(time.Millisecond * 100)
-		}
-		atomic.AddInt32(&currentDemosParseing, 1)
-
-		if isCanceling {
-			atomic.AddInt32(&currentDemosParseing, -1)
-			atomic.AddUint32(&errorDemoFiles, 1)
-			return
-		}
-
-		cache := loadDemoCache(name)
-		if cache != nil {
-			var AllPlrsStats []*PlrStats
-			AllPlrsStats = append(AllPlrsStats, cache.PlrsStats...)
-
-			addTargetsStats(AllPlrsStats[:])
-			
-			log.Println("file cached: ", name)
-			atomic.AddInt32(&currentDemosParseing, -1)
-			atomic.AddUint32(&currentCompletedDemoFiles, 1)
-			return
-		}
-		atomic.AddInt32(&currentDemosParseing, -1)
-
 		for currentDemosUnziped >= maxDemosUnziped {
 			time.Sleep(time.Millisecond * 100)
 		}

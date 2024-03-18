@@ -13,12 +13,6 @@ import (
 	"time"
 )
 
-func check(e error) {
-	if e != nil {
-		log.Panic(e)
-	}
-}
-
 var vertResult *bool
 var dir *string
 var recurse *bool
@@ -108,7 +102,10 @@ func main() {
 
 func dirParse(path string) {
 	osDir, err := os.ReadDir(path)
-	check(err)
+	if err != nil {
+		log.Println("failed to read dir: ", err)
+		return
+	}
 
 	for _, entry := range osDir {
 		if entry.IsDir() && *recurse {
@@ -128,6 +125,7 @@ func PrintProgress() {
 	str += "Total demos: " + strconv.Itoa(int(totalDemoFiles)) + "\n"
 	str += "Current parsed: " + strconv.Itoa(int(currentCompletedDemoFiles)) + "\n"
 	str += "Current used for stats: " + strconv.Itoa(int(usedDemoFiles)) + "\n"
+	str += "Current cached: " + strconv.Itoa(int(currentCachedDemoFiles)) + "\n"
 	str += "Errors, duplicates or skips: " + strconv.Itoa(int(errorDemoFiles)) + "\n"
 
 	fmt.Println(str)
