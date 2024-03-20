@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"sync"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -21,7 +21,7 @@ var resultFile *string
 var cacheDir *string
 var useCache *bool
 
-var wgDem sync.WaitGroup
+var gamemode *string
 
 func main() {
 	plrID1 := flag.Uint64("p1", 0, "SteamID64 of first player")
@@ -38,6 +38,8 @@ func main() {
 
 	cacheDir = flag.String("cd", "cache", "cache directory")
 	useCache = flag.Bool("c", true, "use cache")
+
+	gamemode = flag.String("gm", "", "game mode (m - matchmaking, w - wingman, o - other) can be specified separated by commas (format -gm=m or -gm='m,w,o')")
 
 	flag.Parse()
 
@@ -63,17 +65,36 @@ func main() {
 	}
 
 	if *plrID1 == 0 && *plrID2 == 0 && *plrID3 == 0 && *plrID4 == 0 && *plrID5 == 0 {
+		log.Println("one of -p1, -p2, -p3, -p4, -p5 is required")
 		flag.PrintDefaults()
 		return
-		//log.Panicln("one of -p1, -p2, -p3, -p4, -p5 is required")
 	}
 
 	log.Println("dir: ", *dir+"/")
 
 	if *dir == "" {
+		log.Println("-dir is required")
 		flag.PrintDefaults()
 		return
-		//log.Panicln("dir of demofiles not set")
+	}
+
+	gmSplit := strings.Split(*gamemode, ",")
+
+	for _, gm := range gmSplit {
+		if gm == "m" {
+			useStatsMatchmaking = true
+		} else if gm == "w" {
+			useStatsWingman = true
+		} else if gm == "o" {
+			useStatsOther = true
+		}
+	}
+
+	if !useStatsMatchmaking && !useStatsWingman && !useStatsOther {
+		log.Println("-gm is not set, used -gm=m,w,o")
+		useStatsMatchmaking = true
+		useStatsWingman = true
+		useStatsOther = true
 	}
 
 	sigs := make(chan os.Signal, 1)
@@ -121,7 +142,7 @@ func dirParse(path string) {
 
 func PrintProgress() {
 	str := "\n"
-	str += "Progress: " + strconv.Itoa(int(currentCompletedDemoFiles + errorDemoFiles)) + " / " + strconv.Itoa(int(totalDemoFiles)) + " %" + strconv.FormatFloat(float64(currentCompletedDemoFiles + errorDemoFiles) / float64(totalDemoFiles) * 100, 'f', 4, 64) + "\n"
+	str += "Progress: " + strconv.Itoa(int(currentCompletedDemoFiles + currentCachedDemoFiles + errorDemoFiles)) + " / " + strconv.Itoa(int(totalDemoFiles)) + " %" + strconv.FormatFloat(float64(currentCompletedDemoFiles + currentCachedDemoFiles + errorDemoFiles) / float64(totalDemoFiles) * 100, 'f', 4, 64) + "\n"
 	str += "Total demos: " + strconv.Itoa(int(totalDemoFiles)) + "\n"
 	str += "Current parsed: " + strconv.Itoa(int(currentCompletedDemoFiles)) + "\n"
 	str += "Current used for stats: " + strconv.Itoa(int(usedDemoFiles)) + "\n"

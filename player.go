@@ -28,23 +28,6 @@ type PlrStats struct {
 	statsThroughSmokes     uint64
 }
 
-// Maybe not needed
-/*func (p *PlrStats) appendStats(plr *common.Player) {
-	if p.SteamID64 == plr.SteamID64 {
-		if p.Name == "" {
-			p.Name = plr.Name
-		}
-	
-		atomic.AddUint64(&p.statsScore, uint64(plr.Score()))
-		atomic.AddUint64(&p.statsDamage, uint64(plr.TotalDamage()))
-		atomic.AddUint64(&p.statsKills, uint64(plr.Kills()))
-		atomic.AddUint64(&p.statsAssists, uint64(plr.Assists()))
-		atomic.AddUint64(&p.statsDeaths, uint64(plr.Deaths()))
-		atomic.AddUint64(&p.statsMVPs, uint64(plr.MVPs()))
-		atomic.AddUint64(&p.statsPing, uint64(plr.Ping()))
-	}
-}*/
-
 func (p *PlrStats) appendStatKills(e *events.Kill) {
 	if e.Killer != nil && e.Killer.SteamID64 == p.SteamID64 {
 		atomic.AddUint64(&p.statsPenetratedObjects, uint64(e.PenetratedObjects))
@@ -106,36 +89,37 @@ func (p *PlrStats) appendStatsFromPlrStats(otherPlrStats *PlrStats) {
 	}
 }
 
+const StrfmtPlrStatsEnd = "\t"
 const StrfmtPlrStatsName = "Name='"
-const StrfmtPlrStatsNameEnd = "'\t"
+const StrfmtPlrStatsNameEnd = "'" + StrfmtPlrStatsEnd
 const StrfmtPlrStatsSteamID64 = "SteamID64="
-const StrfmtPlrStatsSteamID64End = "\t"
-const StrfmtPlrStatsScore = "Score='"
-const StrfmtPlrStatsScoreEnd = "\t"
-const StrfmtPlrStatsDamage = "Damage='"
-const StrfmtPlrStatsDamageEnd = "\t"
-const StrfmtPlrStatsKills = "Kills='"
-const StrfmtPlrStatsKillsEnd = "\t"
-const StrfmtPlrStatsAssists = "Assists='"
-const StrfmtPlrStatsAssistsEnd = "\t"
-const StrfmtPlrStatsDeaths = "Deaths='"
-const StrfmtPlrStatsDeathsEnd = "\t"
-const StrfmtPlrStatsMVPs = "MVPs='"
-const StrfmtPlrStatsMVPsEnd = "\t"
-const StrfmtPlrStatsPing = "Ping='"
-const StrfmtPlrStatsPingEnd = "\t"
-const StrfmtPlrStatsPenetratedObjects = "PenetratedObjects='"
-const StrfmtPlrStatsPenetratedObjectsEnd = "\t"
-const StrfmtPlrStatsHeadShots = "HeadShots='"
-const StrfmtPlrStatsHeadShotsEnd = "\t"
-const StrfmtPlrStatsAttackerBlinds = "AttackerBlinds='"
-const StrfmtPlrStatsAttackerBlindsEnd = "\t"
-const StrfmtPlrStatsAssistedFlashs = "AssistedFlashs='"
-const StrfmtPlrStatsAssistedFlashsEnd = "\t"
+const StrfmtPlrStatsSteamID64End = StrfmtPlrStatsEnd
+const StrfmtPlrStatsScore = "Score="
+const StrfmtPlrStatsScoreEnd = StrfmtPlrStatsEnd
+const StrfmtPlrStatsDamage = "Damage="
+const StrfmtPlrStatsDamageEnd = StrfmtPlrStatsEnd
+const StrfmtPlrStatsKills = "Kills="
+const StrfmtPlrStatsKillsEnd = StrfmtPlrStatsEnd
+const StrfmtPlrStatsAssists = "Assists="
+const StrfmtPlrStatsAssistsEnd = StrfmtPlrStatsEnd
+const StrfmtPlrStatsDeaths = "Deaths="
+const StrfmtPlrStatsDeathsEnd = StrfmtPlrStatsEnd
+const StrfmtPlrStatsMVPs = "MVPs="
+const StrfmtPlrStatsMVPsEnd = StrfmtPlrStatsEnd
+const StrfmtPlrStatsPing = "Ping="
+const StrfmtPlrStatsPingEnd = StrfmtPlrStatsEnd
+const StrfmtPlrStatsPenetratedObjects = "PenetratedObjects="
+const StrfmtPlrStatsPenetratedObjectsEnd = StrfmtPlrStatsEnd
+const StrfmtPlrStatsHeadShots = "HeadShots="
+const StrfmtPlrStatsHeadShotsEnd = StrfmtPlrStatsEnd
+const StrfmtPlrStatsAttackerBlinds = "AttackerBlinds="
+const StrfmtPlrStatsAttackerBlindsEnd = StrfmtPlrStatsEnd
+const StrfmtPlrStatsAssistedFlashs = "AssistedFlashs="
+const StrfmtPlrStatsAssistedFlashsEnd = StrfmtPlrStatsEnd
 const StrfmtPlrStatsNoScopes = "NoScopes="
-const StrfmtPlrStatsNoScopesEnd = "\t"
+const StrfmtPlrStatsNoScopesEnd = StrfmtPlrStatsEnd
 const StrfmtPlrStatsThroughSmokes = "ThroughSmokes="
-const StrfmtPlrStatsThroughSmokesEnd = "\t"
+const StrfmtPlrStatsThroughSmokesEnd = StrfmtPlrStatsEnd
 
 func (p *PlrStats) toString() string {
 	str := StrfmtPlrStatsName + p.Name + StrfmtPlrStatsNameEnd
@@ -157,64 +141,188 @@ func (p *PlrStats) toString() string {
 	return str
 }
 
-func (p *PlrStats) fromString(str string) {
+// Returns true if successful
+func (p *PlrStats) fromString(str string) bool {
 	var err error
+	var Split []string
 
-	p.Name = strings.Split(strings.Split(str, StrfmtPlrStatsName)[1], StrfmtPlrStatsNameEnd)[0]
-	p.SteamID64, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsSteamID64)[1], StrfmtPlrStatsSteamID64End)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse SteamID64: ", err)
+	var IsError bool = false
+
+	Split = strings.Split(str, StrfmtPlrStatsName)
+	if len(Split) >= 2 {
+		p.Name = strings.Split(Split[1], StrfmtPlrStatsNameEnd)[0]
+	} else {
+		log.Println("failed to parse Name: not found")
+		IsError = true
 	}
-	p.statsScore, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsScore)[1], StrfmtPlrStatsScoreEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsScore: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsSteamID64)
+	if len(Split) >= 2 {
+		p.SteamID64, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsSteamID64End)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse SteamID64: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse SteamID64: not found")
+		IsError = true
 	}
-	p.statsDamage, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsDamage)[1], StrfmtPlrStatsDamageEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsDamage: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsScore)
+	if len(Split) >= 2 {
+		p.statsScore, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsScoreEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsScore: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsScore: not found")
+		IsError = true
 	}
-	p.statsKills, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsKills)[1], StrfmtPlrStatsKillsEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsKills: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsDamage)
+	if len(Split) >= 2 {
+		p.statsDamage, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsDamageEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsDamage: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsDamage: not found")
+		IsError = true
 	}
-	p.statsAssists, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsAssists)[1], StrfmtPlrStatsAssistsEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsAssists: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsKills)
+	if len(Split) >= 2 {
+		p.statsKills, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsKillsEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsKills: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsKills: not found")
+		IsError = true
 	}
-	p.statsDeaths, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsDeaths)[1], StrfmtPlrStatsDeathsEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsDeaths: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsAssists)
+	if len(Split) >= 2 {
+		p.statsAssists, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsAssistsEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsAssists: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsAssists: not found")
+		IsError = true
 	}
-	p.statsMVPs, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsMVPs)[1], StrfmtPlrStatsMVPsEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsMVPs: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsDeaths)
+	if len(Split) >= 2 {
+		p.statsDeaths, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsDeathsEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsDeaths: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsDeaths: not found")
+		IsError = true
 	}
-	p.statsPing, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsPing)[1], StrfmtPlrStatsPingEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsPing: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsMVPs)
+	if len(Split) >= 2 {
+		p.statsMVPs, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsMVPsEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsMVPs: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsMVPs: not found")
+		IsError = true
 	}
-	p.statsPenetratedObjects, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsPenetratedObjects)[1], StrfmtPlrStatsPenetratedObjectsEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsPenetratedObjects: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsPing)
+	if len(Split) >= 2 {
+		p.statsPing, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsPingEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsPing: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsPing: not found")
+		IsError = true
 	}
-	p.statsHeadShots, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsHeadShots)[1], StrfmtPlrStatsHeadShotsEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsHeadShots: ", err)
+	
+	Split = strings.Split(str, StrfmtPlrStatsPenetratedObjects)
+	if len(Split) >= 2 {
+		p.statsPenetratedObjects, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsPenetratedObjectsEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsPenetratedObjects: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsPenetratedObjects: not found")
+		IsError = true
 	}
-	p.statsAssistedFlashs, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsAssistedFlashs)[1], StrfmtPlrStatsAssistedFlashsEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsAssistedFlashs: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsHeadShots)
+	if len(Split) >= 2 {
+		p.statsHeadShots, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsHeadShotsEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsHeadShots: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsHeadShots: not found")
+		IsError = true
 	}
-	p.statsAttackerBlinds, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsAttackerBlinds)[1], StrfmtPlrStatsAttackerBlindsEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsAttackerBlinds: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsAssistedFlashs)
+	if len(Split) >= 2 {
+		p.statsAssistedFlashs, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsAssistedFlashsEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsAssistedFlashs: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsAssistedFlashs: not found")
+		IsError = true
 	}
-	p.statsNoScopes, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsNoScopes)[1], StrfmtPlrStatsNoScopesEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsNoScopes: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsAttackerBlinds)
+	if len(Split) >= 2 {
+		p.statsAttackerBlinds, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsAttackerBlindsEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsAttackerBlinds: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsAttackerBlinds: not found")
+		IsError = true
 	}
-	p.statsThroughSmokes, err = strconv.ParseUint(strings.Split(strings.Split(str, StrfmtPlrStatsThroughSmokes)[1], StrfmtPlrStatsThroughSmokesEnd)[0], 10, 64)
-	if err != nil {
-		log.Println("failed to parse statsThroughSmokes: ", err)
+
+	Split = strings.Split(str, StrfmtPlrStatsNoScopes)
+	if len(Split) >= 2 {
+		p.statsNoScopes, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsNoScopesEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsNoScopes: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsNoScopes: not found")
+		IsError = true
 	}
+
+	Split = strings.Split(str, StrfmtPlrStatsThroughSmokes)
+	if len(Split) >= 2 {
+		p.statsThroughSmokes, err = strconv.ParseUint(strings.Split(Split[1], StrfmtPlrStatsThroughSmokesEnd)[0], 10, 64)
+		if err != nil {
+			log.Println("failed to parse statsThroughSmokes: ", err)
+			IsError = true
+		}
+	} else {
+		log.Println("failed to parse statsThroughSmokes: not found")
+		IsError = true
+	}
+
+	return !IsError
 }

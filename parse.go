@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,7 +32,13 @@ var usedDemoFiles uint32
 var currentCachedDemoFiles uint32
 var errorDemoFiles uint32
 
+var wgDem sync.WaitGroup
+
 var PlrsStats []*PlrStats
+
+var useStatsMatchmaking bool = false
+var useStatsWingman bool = false
+var useStatsOther bool = false
 
 func uncompress(path string) *bytes.Buffer {
 	for currentDemosUnziping >= maxDemosUnziping {
@@ -102,7 +109,7 @@ func demPrepare(path string, name string) {
 		var AllPlrsStats []*PlrStats
 		AllPlrsStats = append(AllPlrsStats, cache.PlrsStats...)
 
-		addTargetsStats(AllPlrsStats[:])
+		addTargetsStats(AllPlrsStats[:], cache.Gamemode)
 			
 		log.Println("file cached: ", name)
 		atomic.AddInt32(&currentDemosParseing, -1)
@@ -173,27 +180,7 @@ func demParse(reader io.Reader, path string) bool {
 	RegAllPlrsStats := func() {
 		gs := p.GameState()
 
-		ct := gs.TeamCounterTerrorists()
-		t := gs.TeamTerrorists()
-
-		// CT
-		for _, plr := range ct.Members() {
-			found := false
-			for _, plrstat := range AllPlrsStats {
-				if plr.SteamID64 == plrstat.SteamID64 {
-					found = true
-					plrstat.setStats(plr)
-				}
-			}
-			if (!found) {
-				pstats := PlrStats{SteamID64: plr.SteamID64}
-				pstats.setStats(plr)
-				AllPlrsStats = append(AllPlrsStats, &pstats)
-			}
-		}
-
-		// T
-		for _, plr := range t.Members() {
+		for _, plr := range gs.Participants().Playing() {
 			found := false
 			for _, plrstat := range AllPlrsStats {
 				if plr.SteamID64 == plrstat.SteamID64 {
@@ -208,6 +195,22 @@ func demParse(reader io.Reader, path string) bool {
 			}
 		}
 	}
+
+	p.RegisterEventHandler(func(e events.AnnouncementMatchStarted) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.AnnouncementLastRoundHalf) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.AnnouncementFinalRound) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.AnnouncementWinPanelMatch) {
+		RegAllPlrsStats()
+	})
 
 	p.RegisterEventHandler(func(e events.RoundStart) {
 		RegAllPlrsStats()
@@ -251,15 +254,15 @@ func demParse(reader io.Reader, path string) bool {
 
 	// Create demo cache
 	cache := createDemoCache(path, p, AllPlrsStats[:])
-	cache.saveToDisk()
+	cache.saveToDisk(true)
 
-	addTargetsStats(AllPlrsStats[:])
+	addTargetsStats(AllPlrsStats[:], 0)
 	
 	atomic.AddInt32(&currentDemosParseing, -1)
 	return true
 }
 
-func addTargetsStats(AllPlrsStats []*PlrStats) {
+func addTargetsStats(AllPlrsStats []*PlrStats, gamemode int) {
 	foundPlrs := ""
 	for _, plr := range AllPlrsStats {
 		foundPlrs += "\t" + plr.Name
@@ -289,16 +292,30 @@ func addTargetsStats(AllPlrsStats []*PlrStats) {
 				}
 			}
 		}
-		atomic.AddUint32(&usedDemoFiles, 1)
 	} else {
 		return
 	}
 
-	for _, plr := range PlrsResults {
-		for _, plrstat := range PlrsStats {
-			if plr.SteamID64 == plrstat.SteamID64 {
-				plrstat.appendStatsFromPlrStats(plr)
+	Merge := func() {
+		for _, plr := range PlrsResults {
+			for _, plrstat := range PlrsStats {
+				if plr.SteamID64 == plrstat.SteamID64 {
+					plrstat.appendStatsFromPlrStats(plr)
+				}
 			}
 		}
+		atomic.AddUint32(&usedDemoFiles, 1)
+	}
+
+	if gamemode == 0 {
+		gamemode = getGameMode(len(AllPlrsStats))
+	}
+
+	if useStatsMatchmaking && gamemode == Matchmaking {
+		Merge()
+	} else if useStatsWingman && gamemode == Wingman {
+		Merge()
+	} else if useStatsOther && gamemode == Other {
+		Merge()
 	}
 }
