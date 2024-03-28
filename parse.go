@@ -201,6 +201,8 @@ func demParse(reader io.Reader, path string) bool {
 	defer p.Close()
 
 	var AllPlrsStats []*PlrStats
+	var PlrsPing map[uint64]uint64
+	var PlrsPingChecks uint64
 
 	RegAllPlrsStats := func() {
 		gs := p.GameState()
@@ -211,11 +213,15 @@ func demParse(reader io.Reader, path string) bool {
 				if plr.SteamID64 == plrstat.SteamID64 {
 					found = true
 					plrstat.setStats(plr)
+					PlrsPing[plr.SteamID64] += uint64(plr.Ping())
+					PlrsPingChecks++
 				}
 			}
 			if (!found) {
 				pstats := PlrStats{SteamID64: plr.SteamID64}
 				pstats.setStats(plr)
+				PlrsPing[plr.SteamID64] += uint64(plr.Ping())
+				PlrsPingChecks++
 				AllPlrsStats = append(AllPlrsStats, &pstats)
 			}
 		}
@@ -305,6 +311,14 @@ func demParse(reader io.Reader, path string) bool {
 		atomic.AddUint32(&errorDemoFiles, 1)
 		atomic.AddInt32(&currentDemosParseing, -1)
 		return false
+	}
+
+	// Set Avg Ping
+	for _, plrstat := range AllPlrsStats {
+		if PlrsPing[plrstat.SteamID64] == 0 {
+			continue
+		}
+		plrstat.statsPing = uint64(PlrsPing[plrstat.SteamID64] / PlrsPingChecks)
 	}
 
 	// Create demo cache
