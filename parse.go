@@ -26,19 +26,23 @@ var currentDemosUnziped int32
 const maxDemosParseing int32 = maxDemosUnziped + 2
 var currentDemosParseing int32
 
-var totalDemoFiles uint32
+var totalFiles uint32
 var currentCompletedDemoFiles uint32
 var usedDemoFiles uint32
 var currentCachedDemoFiles uint32
 var errorDemoFiles uint32
 
 var wgDem sync.WaitGroup
+var wgCache sync.WaitGroup
 
 var PlrsStats []*PlrStats
 
 var useStatsMatchmaking bool = false
 var useStatsWingman bool = false
 var useStatsOther bool = false
+
+var usedDemoFileNamesMutex sync.Mutex
+var usedDemoFileNames []string
 
 func uncompress(path string) *bytes.Buffer {
 	for currentDemosUnziping >= maxDemosUnziping {
@@ -83,14 +87,15 @@ func uncompress(path string) *bytes.Buffer {
 	return buf
 }
 
-func demPrepare(path string, name string) {
-	defer wgDem.Done()
+// Returns 0 if success parsed demo, 1 if found in cache, 2 if error
+func cacheParse(path string, name string) int {
+	defer wgCache.Done()
 
 	dem := findDemoInMemByName(name)
 	if dem != nil {
 		log.Println("demo already parsed: ", path)
 		atomic.AddUint32(&errorDemoFiles, 1)
-		return
+		return 1
 	}
 
 	for currentDemosParseing >= maxDemosParseing {
@@ -101,22 +106,40 @@ func demPrepare(path string, name string) {
 	if isCanceling {
 		atomic.AddInt32(&currentDemosParseing, -1)
 		atomic.AddUint32(&errorDemoFiles, 1)
-		return
+		return 2
 	}
 
-	cache := loadDemoCache(name)
+	cache, IsDupe := loadDemoCache(name)
 	if cache != nil {
 		var AllPlrsStats []*PlrStats
 		AllPlrsStats = append(AllPlrsStats, cache.PlrsStats...)
 
-		addTargetsStats(AllPlrsStats[:], cache.Gamemode)
+		addTargetsStats(AllPlrsStats[:], cache.Gamemode, cache.Name)
 			
 		log.Println("file cached: ", name)
 		atomic.AddInt32(&currentDemosParseing, -1)
 		atomic.AddUint32(&currentCachedDemoFiles, 1)
-		return
+		return 0
+	} else if IsDupe {
+		log.Println("demo already parsed: ", path)
+		atomic.AddInt32(&currentDemosParseing, -1)
+		atomic.AddUint32(&errorDemoFiles, 1)
+		return 1
 	}
 	atomic.AddInt32(&currentDemosParseing, -1)
+	return 2
+}
+
+func demPrepare(path string, name string) {
+	defer wgDem.Done()
+
+	wgCache.Add(1)
+	cacheResult := cacheParse(path, name)
+	if cacheResult == 0 {
+		return
+	} else if cacheResult == 1 {
+		return
+	}
 
 	ext := filepath.Ext(path)
 	if ext == ".bz2" || ext == ".gz" {
@@ -163,6 +186,8 @@ func demPrepare(path string, name string) {
 
 		log.Println("file parsed: ", name)
 		atomic.AddUint32(&currentCompletedDemoFiles, 1)
+	} else {
+		atomic.AddUint32(&errorDemoFiles, 1)
 	}
 }
 
@@ -216,7 +241,35 @@ func demParse(reader io.Reader, path string) bool {
 		RegAllPlrsStats()
 	})
 
+	p.RegisterEventHandler(func(e events.RoundEnd) {
+		RegAllPlrsStats()
+	})
+
 	p.RegisterEventHandler(func(e events.RoundEndOfficial) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.PlayerConnect) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.PlayerDisconnected) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.PlayerFlashed) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.PlayerJump) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.BotConnect) {
+		RegAllPlrsStats()
+	})
+
+	p.RegisterEventHandler(func(e events.BotTakenOver) {
 		RegAllPlrsStats()
 	})
 
@@ -224,6 +277,8 @@ func demParse(reader io.Reader, path string) bool {
 		for _, plrstat := range AllPlrsStats {
 			plrstat.appendStatKills(&e)
 		}
+
+		RegAllPlrsStats()
 	})
 
 	p.RegisterEventHandler(func(e events.OtherDeath) {
@@ -244,7 +299,7 @@ func demParse(reader io.Reader, path string) bool {
 	}
 
 	// Check demoid
-	demCache := findDemoInMemByDemoID(p)
+	demCache := findDemoInMemByDemoIDThroughParser(p)
 	if demCache != nil {
 		log.Println("demo already parsed: ", path)
 		atomic.AddUint32(&errorDemoFiles, 1)
@@ -256,13 +311,13 @@ func demParse(reader io.Reader, path string) bool {
 	cache := createDemoCache(path, p, AllPlrsStats[:])
 	cache.saveToDisk(true)
 
-	addTargetsStats(AllPlrsStats[:], 0)
+	addTargetsStats(AllPlrsStats[:], 0, filepath.Base(path))
 	
 	atomic.AddInt32(&currentDemosParseing, -1)
 	return true
 }
 
-func addTargetsStats(AllPlrsStats []*PlrStats, gamemode int) {
+func addTargetsStats(AllPlrsStats []*PlrStats, gamemode int, nameDemo string) {
 	foundPlrs := ""
 	for _, plr := range AllPlrsStats {
 		foundPlrs += "\t" + plr.Name
@@ -305,6 +360,10 @@ func addTargetsStats(AllPlrsStats []*PlrStats, gamemode int) {
 			}
 		}
 		atomic.AddUint32(&usedDemoFiles, 1)
+
+		usedDemoFileNamesMutex.Lock()
+		usedDemoFileNames = append(usedDemoFileNames, nameDemo)
+		usedDemoFileNamesMutex.Unlock()
 	}
 
 	if gamemode == 0 {

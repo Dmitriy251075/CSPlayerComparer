@@ -101,9 +101,33 @@ func PrintResults() {
 
 	str := tw.Render()
 
+	if *showUsedDemoNames {
+		str += "\n\nUsed demo filenames: "
+
+		for i := 0; i < len(usedDemoFileNames); i++ {
+			if i == 0 {
+				str += usedDemoFileNames[i]
+			} else {
+				str += ", " + usedDemoFileNames[i]
+			}
+		}
+	}
+
 	fmt.Print(str)
 
 	if *resultFile != "" {
+		if !*showUsedDemoNames {
+			str += "\n\nUsed demo filenames: "
+
+			for i := 0; i < len(usedDemoFileNames); i++ {
+				if i == 0 {
+					str += usedDemoFileNames[i]
+				} else {
+					str += ", " + usedDemoFileNames[i]
+				}
+			}
+		}
+
 		err := os.WriteFile(*resultFile, []byte(str), 0644)
 		if err != nil {
 			log.Panicln("failed to write result file: ", err)

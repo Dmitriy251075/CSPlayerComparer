@@ -20,8 +20,11 @@ var resultFile *string
 
 var cacheDir *string
 var useCache *bool
+var useOnlyCache *bool
 
 var gamemode *string
+
+var showUsedDemoNames *bool 
 
 func main() {
 	plrID1 := flag.Uint64("p1", 0, "SteamID64 of first player")
@@ -38,8 +41,11 @@ func main() {
 
 	cacheDir = flag.String("cd", "cache", "cache directory")
 	useCache = flag.Bool("c", true, "use cache")
+	useOnlyCache = flag.Bool("oc", false, "use only cache (without parsing)")
 
 	gamemode = flag.String("gm", "", "game mode (m - matchmaking, w - wingman, o - other) can be specified separated by commas (format -gm=m or -gm='m,w,o')")
+
+	showUsedDemoNames = flag.Bool("u", false, "show used demo filenames")
 
 	flag.Parse()
 
@@ -72,7 +78,7 @@ func main() {
 
 	log.Println("dir: ", *dir+"/")
 
-	if *dir == "" {
+	if *dir == "" && !*useOnlyCache {
 		log.Println("-dir is required")
 		flag.PrintDefaults()
 		return
@@ -109,13 +115,18 @@ func main() {
         isCanceling = true
     }()
 
-	dirParse(filepath.Dir(*dir + "/"))
+	if !*useOnlyCache {
+		dirParse(filepath.Dir(*dir + "/"))
+	} else {
+		dirParse(filepath.Dir(*cacheDir + "/"))
+	}
 
-	for currentDemosUnziping != 0 && currentCompletedDemoFiles < totalDemoFiles {
+	for currentDemosUnziping != 0 && currentCompletedDemoFiles < totalFiles {
 		PrintProgress()
 		time.Sleep(time.Millisecond * 5000)
 	}
 	wgDem.Wait()
+	wgCache.Wait()
 	PrintProgress()
 
 	PrintResults()
@@ -132,22 +143,27 @@ func dirParse(path string) {
 		if entry.IsDir() && *recurse {
 			dirParse(filepath.Join(path, entry.Name() + "/"))
 		} else {
-			wgDem.Add(1)
-			go demPrepare(filepath.Join(path, entry.Name()), entry.Name())
-			totalDemoFiles++
+			totalFiles++
+			if filepath.Ext(entry.Name()) == ".txt" {
+				wgCache.Add(1)
+				go cacheParse(filepath.Join(path, entry.Name()), strings.SplitN(entry.Name(), ".txt", 2)[0])
+			} else {
+				wgDem.Add(1)
+				go demPrepare(filepath.Join(path, entry.Name()), entry.Name())
+			}
 		}
 		time.Sleep(time.Microsecond * 25)
 	}
 }
 
 func PrintProgress() {
-	str := "\n"
-	str += "Progress: " + strconv.Itoa(int(currentCompletedDemoFiles + currentCachedDemoFiles + errorDemoFiles)) + " / " + strconv.Itoa(int(totalDemoFiles)) + " %" + strconv.FormatFloat(float64(currentCompletedDemoFiles + currentCachedDemoFiles + errorDemoFiles) / float64(totalDemoFiles) * 100, 'f', 4, 64) + "\n"
-	str += "Total demos: " + strconv.Itoa(int(totalDemoFiles)) + "\n"
+	str := "\n\n"
+	str += "Progress: " + strconv.Itoa(int(currentCompletedDemoFiles + currentCachedDemoFiles + errorDemoFiles)) + " / " + strconv.Itoa(int(totalFiles)) + " %" + strconv.FormatFloat(float64(currentCompletedDemoFiles + currentCachedDemoFiles + errorDemoFiles) / float64(totalFiles) * 100, 'f', 4, 64) + "\n"
+	str += "Total files: " + strconv.Itoa(int(totalFiles)) + "\n"
 	str += "Current parsed: " + strconv.Itoa(int(currentCompletedDemoFiles)) + "\n"
 	str += "Current used for stats: " + strconv.Itoa(int(usedDemoFiles)) + "\n"
 	str += "Current cached: " + strconv.Itoa(int(currentCachedDemoFiles)) + "\n"
 	str += "Errors, duplicates or skips: " + strconv.Itoa(int(errorDemoFiles)) + "\n"
 
-	fmt.Println(str)
+	log.Println(str)
 }
