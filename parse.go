@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs"
+	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/common"
 	"github.com/markus-wa/demoinfocs-golang/v4/pkg/demoinfocs/events"
 	"github.com/mholt/archiver/v3"
 )
@@ -87,7 +88,7 @@ func uncompress(path string) *bytes.Buffer {
 	return buf
 }
 
-// Returns 0 if success parsed demo, 1 if found in cache, 2 if error
+// Returns 0 if success parsed demo, 1 if found in cache, 2 if error, 3 if canceled
 func cacheParse(path string, name string) int {
 	defer wgCache.Done()
 
@@ -106,7 +107,7 @@ func cacheParse(path string, name string) int {
 	if isCanceling {
 		atomic.AddInt32(&currentDemosParseing, -1)
 		atomic.AddUint32(&errorDemoFiles, 1)
-		return 2
+		return 3
 	}
 
 	cache, IsDupe := loadDemoCache(name)
@@ -139,6 +140,8 @@ func demPrepare(path string, name string) {
 		return
 	} else if cacheResult == 1 {
 		return
+	} else if cacheResult == 3 {
+		return
 	}
 
 	ext := filepath.Ext(path)
@@ -166,10 +169,6 @@ func demPrepare(path string, name string) {
 		log.Println("file parsed: ", name)
 		atomic.AddUint32(&currentCompletedDemoFiles, 1)
 	} else if ext == ".dem" {
-		if isCanceling {
-			return
-		}
-
 		// Open file
 		file, err := os.OpenFile(path, os.O_RDONLY, 0)
 		if err != nil {
@@ -191,39 +190,46 @@ func demPrepare(path string, name string) {
 	}
 }
 
+// Returns true if success
 func demParse(reader io.Reader, path string) bool {
 	for currentDemosParseing >= maxDemosParseing {
 		time.Sleep(time.Millisecond * 100)
 	}
 	atomic.AddInt32(&currentDemosParseing, 1)
 
+	if isCanceling {
+		atomic.AddUint32(&errorDemoFiles, 1)
+		atomic.AddInt32(&currentDemosParseing, -1)
+		return false
+	}
+
 	p := demoinfocs.NewParser(reader)
 	defer p.Close()
 
 	var AllPlrsStats []*PlrStats
-	var PlrsPing map[uint64]uint64
-	var PlrsPingChecks uint64
+	var AllPlrsStatsMap = make(map[uint64]*PlrStats)
+	var PlrsPing = make(map[uint64]uint64)
+	var PlrsPingChecks = make(map[uint64]uint64)
 
 	RegAllPlrsStats := func() {
 		gs := p.GameState()
 
+		SetStats := func (plr *common.Player)  {
+			AllPlrsStatsMap[plr.SteamID64].setStats(plr)
+			PlrsPing[plr.SteamID64] += uint64(plr.Ping())
+			PlrsPingChecks[plr.SteamID64] += 1
+		}
+
 		for _, plr := range gs.Participants().Playing() {
-			found := false
-			for _, plrstat := range AllPlrsStats {
-				if plr.SteamID64 == plrstat.SteamID64 {
-					found = true
-					plrstat.setStats(plr)
-					PlrsPing[plr.SteamID64] += uint64(plr.Ping())
-					PlrsPingChecks++
-				}
+			if AllPlrsStatsMap[plr.SteamID64] != nil {
+				SetStats(plr)
+				continue
 			}
-			if (!found) {
-				pstats := PlrStats{SteamID64: plr.SteamID64}
-				pstats.setStats(plr)
-				PlrsPing[plr.SteamID64] += uint64(plr.Ping())
-				PlrsPingChecks++
-				AllPlrsStats = append(AllPlrsStats, &pstats)
-			}
+
+			pstats := PlrStats{SteamID64: plr.SteamID64}
+			AllPlrsStats = append(AllPlrsStats, &pstats)
+			AllPlrsStatsMap[plr.SteamID64] = &pstats
+			SetStats(plr)
 		}
 	}
 
@@ -280,11 +286,11 @@ func demParse(reader io.Reader, path string) bool {
 	})
 
 	p.RegisterEventHandler(func(e events.Kill) {
+		RegAllPlrsStats()
+
 		for _, plrstat := range AllPlrsStats {
 			plrstat.appendStatKills(&e)
 		}
-
-		RegAllPlrsStats()
 	})
 
 	p.RegisterEventHandler(func(e events.OtherDeath) {
@@ -318,7 +324,7 @@ func demParse(reader io.Reader, path string) bool {
 		if PlrsPing[plrstat.SteamID64] == 0 {
 			continue
 		}
-		plrstat.statsPing = uint64(PlrsPing[plrstat.SteamID64] / PlrsPingChecks)
+		plrstat.statsPing = uint64(PlrsPing[plrstat.SteamID64] / PlrsPingChecks[plrstat.SteamID64])
 	}
 
 	// Create demo cache
@@ -338,57 +344,46 @@ func addTargetsStats(AllPlrsStats []*PlrStats, gamemode int, nameDemo string) {
 	}
 	log.Println("found players:", foundPlrs)
 
-	var PlrsResults []*PlrStats
+	var PlrsResults = make(map[uint64]*PlrStats)
 	for _, plrstat := range PlrsStats {
 		plr := PlrStats{SteamID64: plrstat.SteamID64}
-		PlrsResults = append(PlrsResults, &plr)
+		PlrsResults[plrstat.SteamID64] = &plr
+	}
+
+	Merge := func() {
+		if len(PlrsStats) == len(PlrsResults) {
+			for _, plr := range PlrsStats {
+				plr.appendStatsFromPlrStats(PlrsResults[plr.SteamID64])
+			}
+			atomic.AddUint32(&usedDemoFiles, 1)
+	
+			usedDemoFileNamesMutex.Lock()
+			usedDemoFileNames = append(usedDemoFileNames, nameDemo)
+			usedDemoFileNamesMutex.Unlock()
+		}
 	}
 
 	var countTargetInDemo = 0
 	for _, plrstat := range AllPlrsStats {
-		for _, plr := range PlrsResults {
-			if plr.SteamID64 == plrstat.SteamID64 {
-				countTargetInDemo++
-			}
+		if PlrsResults[plrstat.SteamID64] != nil {
+			countTargetInDemo++
+			PlrsResults[plrstat.SteamID64].appendStatsFromPlrStats(plrstat)
 		}
 	}
 
 	if countTargetInDemo == len(PlrsResults) {
-		for _, plr := range AllPlrsStats {
-			for _, plrstat := range PlrsResults {
-				if plr.SteamID64 == plrstat.SteamID64 {
-					plrstat.appendStatsFromPlrStats(plr)
-				}
-			}
+		if gamemode == 0 {
+			gamemode = getGameMode(len(AllPlrsStats))
+		}
+	
+		if useStatsMatchmaking && gamemode == Matchmaking {
+			Merge()
+		} else if useStatsWingman && gamemode == Wingman {
+			Merge()
+		} else if useStatsOther && gamemode == Other {
+			Merge()
 		}
 	} else {
 		return
-	}
-
-	Merge := func() {
-		for _, plr := range PlrsResults {
-			for _, plrstat := range PlrsStats {
-				if plr.SteamID64 == plrstat.SteamID64 {
-					plrstat.appendStatsFromPlrStats(plr)
-				}
-			}
-		}
-		atomic.AddUint32(&usedDemoFiles, 1)
-
-		usedDemoFileNamesMutex.Lock()
-		usedDemoFileNames = append(usedDemoFileNames, nameDemo)
-		usedDemoFileNamesMutex.Unlock()
-	}
-
-	if gamemode == 0 {
-		gamemode = getGameMode(len(AllPlrsStats))
-	}
-
-	if useStatsMatchmaking && gamemode == Matchmaking {
-		Merge()
-	} else if useStatsWingman && gamemode == Wingman {
-		Merge()
-	} else if useStatsOther && gamemode == Other {
-		Merge()
 	}
 }
