@@ -88,16 +88,14 @@ func uncompress(path string) *bytes.Buffer {
 	return buf
 }
 
+var CacheParsingMutex sync.Mutex
+
 // Returns 0 if success parsed demo, 1 if found in cache, 2 if error, 3 if canceled
 func cacheParse(path string, name string) int {
 	defer wgCache.Done()
 
-	dem := findDemoInMemByName(name)
-	if dem != nil {
-		log.Println("demo already parsed: ", path)
-		atomic.AddUint32(&errorDemoFiles, 1)
-		return 1
-	}
+	CacheParsingMutex.Lock()
+	defer CacheParsingMutex.Unlock()
 
 	for currentDemosParseing >= maxDemosParseing {
 		time.Sleep(time.Millisecond * 100)
@@ -110,8 +108,16 @@ func cacheParse(path string, name string) int {
 		return 3
 	}
 
+	dem := findDemoInMemByName(name)
+	if dem != nil {
+		log.Println("demo already parsed: ", path)
+		atomic.AddInt32(&currentDemosParseing, -1)
+		atomic.AddUint32(&errorDemoFiles, 1)
+		return 1
+	}
+
 	cache, IsDupe := loadDemoCache(name)
-	if cache != nil {
+	if cache != nil && !IsDupe {
 		var AllPlrsStats []*PlrStats
 		AllPlrsStats = append(AllPlrsStats, cache.PlrsStats...)
 
@@ -121,7 +127,7 @@ func cacheParse(path string, name string) int {
 		atomic.AddInt32(&currentDemosParseing, -1)
 		atomic.AddUint32(&currentCachedDemoFiles, 1)
 		return 0
-	} else if IsDupe {
+	} else if cache != nil && IsDupe  {
 		log.Println("demo already parsed: ", path)
 		atomic.AddInt32(&currentDemosParseing, -1)
 		atomic.AddUint32(&errorDemoFiles, 1)
@@ -310,15 +316,6 @@ func demParse(reader io.Reader, path string) bool {
 		return false
 	}
 
-	// Check demoid
-	demCache := findDemoInMemByDemoIDThroughParser(p)
-	if demCache != nil {
-		log.Println("demo already parsed: ", path)
-		atomic.AddUint32(&errorDemoFiles, 1)
-		atomic.AddInt32(&currentDemosParseing, -1)
-		return false
-	}
-
 	// Set Avg Ping
 	for _, plrstat := range AllPlrsStats {
 		if PlrsPing[plrstat.SteamID64] == 0 {
@@ -327,8 +324,24 @@ func demParse(reader io.Reader, path string) bool {
 		plrstat.statsPing = uint64(PlrsPing[plrstat.SteamID64] / PlrsPingChecks[plrstat.SteamID64])
 	}
 
+	var cache *DemoCache
+
+	// Check demoid
+	demCache := findDemoInMemByDemoIDThroughParser(p)
+	if demCache != nil {
+		if demCache.Name != filepath.Base(path) {
+			cache = createDemoCache(path, p, AllPlrsStats[:], true)
+			cache.saveToDisk(true)
+		}
+
+		log.Println("demo already parsed: ", path)
+		atomic.AddUint32(&errorDemoFiles, 1)
+		atomic.AddInt32(&currentDemosParseing, -1)
+		return false
+	}
+
 	// Create demo cache
-	cache := createDemoCache(path, p, AllPlrsStats[:])
+	cache = createDemoCache(path, p, AllPlrsStats[:], false)
 	cache.saveToDisk(true)
 
 	addTargetsStats(AllPlrsStats[:], 0, filepath.Base(path))

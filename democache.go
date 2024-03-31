@@ -40,17 +40,15 @@ func getGameMode(PlrStatsLength int) int {
 }
 
 // Use this feature after completing the demo analysis.
-func createDemoCache(path string, parser demoinfocs.Parser, Plrs []*PlrStats) *DemoCache {
+func createDemoCache(path string, parser demoinfocs.Parser, Plrs []*PlrStats, force bool) *DemoCache {
 	dem := DemoCache{
 		Name: filepath.Base(path),
 	}
 
 	demoid := createDemoID(parser)
 
-	for _, demo := range Cache {
-		if demo.demoID == demoid {
-			return nil
-		}
+	if !force && findDemoInMemByDemoID(demoid) != nil {
+		return nil
 	}
 
 	dem.demoID = demoid
@@ -75,98 +73,86 @@ const StrfmtDemoCachePlrEnd = StrfmtDemoCacheEnd
 // Returns demoCache and true if found in mem or false if not found in mem
 func loadDemoCache(demoName string) (*DemoCache, bool) {
 	if *useCache {
-		dem := findDemoInMemByName(demoName)
-		if dem != nil {
-			return dem, true
+		demMem := findDemoInMemByName(demoName)
+		if demMem != nil {
+			return demMem, true
 		}
 
-		d, err :=os.ReadDir(*cacheDir + "/")
+		data, err := os.ReadFile(*cacheDir + "/" + filepath.Base(demoName) + ".txt")
 		if err != nil {
-			log.Println("failed to read cache directory: ", err)
-			if os.IsNotExist(err) {
-				err := os.Mkdir(*cacheDir, os.ModePerm)
-				if err != nil {
-					log.Println("failed to create cache directory: ", err)
-				}
-			}
+			log.Println("failed to read cache file: ", err)
+			return nil, false
 		}
 
-		var IsExists bool = false
-		for _, file := range d {
-			if file.Name() == filepath.Base(demoName) + ".txt" {
-				IsExists = true
-			}
+		dem := DemoCache{
+			Name: filepath.Base(demoName),
 		}
 
-		if IsExists {
-			CacheMutex.Lock()
-			defer CacheMutex.Unlock()
+		// Parse demoID
+		SplitDemoID := strings.SplitN(string(data), StrfmtDemoCacheDemoID, 2)
+		if len(SplitDemoID) < 2 {
+			log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": demoID not found")
+			return nil, false
+		}
+		DemoID := strings.SplitN(SplitDemoID[1], StrfmtDemoCacheDemoIDEnd, 2)[0]
+		if DemoID != "" {
+			dem.demoID = DemoID
+		} else {
+			log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": demoID not found")
+			return nil, false
+		}
 
-			data, err := os.ReadFile(*cacheDir + "/" + filepath.Base(demoName) + ".txt")
+		demMem = findDemoInMemByDemoID(DemoID)
+		if demMem != nil {
+			return demMem, true
+		}
+
+		// Parse gamemode
+		SplitMode := strings.SplitN(string(data), StrfmtDemoCacheMode, 2)
+		if len(SplitMode) < 2 {
+			log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": gamemode not found")
+			return nil, false
+		}
+		Mode := strings.SplitN(SplitMode[1], StrfmtDemoCacheModeEnd, 2)[0]
+		if Mode != "" {
+			gamemode, err := strconv.ParseInt(Mode, 10, 32)
 			if err != nil {
-				log.Println("failed to read cache file: ", err)
-			}
-
-			dem := DemoCache{
-				Name: filepath.Base(demoName),
-			}
-
-			SplitDemoID := strings.SplitN(string(data), StrfmtDemoCacheDemoID, 2)
-			if len(SplitDemoID) < 2 {
-				log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": demoID not found")
+				log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": ", err)
 				return nil, false
 			}
-			DemoID := strings.SplitN(SplitDemoID[1], StrfmtDemoCacheDemoIDEnd, 2)[0]
-			if DemoID != "" {
-				dem.demoID = DemoID
-			} else {
-				log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": demoID not found")
-				return nil, false
-			}
-
-			checkDemID := findDemoInMemByDemoID(DemoID)
-			if checkDemID != nil {
-				return checkDemID, true
-			}
-
-			SplitMode := strings.SplitN(string(data), StrfmtDemoCacheMode, 2)
-			if len(SplitMode) < 2 {
-				log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": gamemode not found")
-				return nil, false
-			}
-			Mode := strings.SplitN(SplitMode[1], StrfmtDemoCacheModeEnd, 2)[0]
-			if Mode != "" {
-				gamemode, err := strconv.ParseInt(Mode, 10, 32)
-				if err != nil {
-					log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": ", err)
-					return nil, false
-				}
-				dem.Gamemode = int(gamemode)
-			} else {
-				log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": gamemode not found")
-				return nil, false
-			}
-
-			plrSplit := strings.Split(string(data), StrfmtDemoCachePlr)
-
-			for plrI := 1; plrI < len(plrSplit); plrI++ {
-				plr := strings.SplitN(plrSplit[plrI], StrfmtDemoCachePlrEnd, 2)[0]
-
-				p := PlrStats{}
-				
-				IsOK := p.fromString(plr)
-				if !IsOK {
-					log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": player not found: " + plr)
-					return nil, false
-				}
-
-				dem.PlrsStats = append(dem.PlrsStats, &p)
-			}
-
-			Cache = append(Cache, &dem)
-			return &dem, false
+			dem.Gamemode = int(gamemode)
+		} else {
+			log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": gamemode not found")
+			return nil, false
 		}
-		return nil, false
+
+		// Parse players
+		plrSplit := strings.Split(string(data), StrfmtDemoCachePlr)
+
+		for plrI := 1; plrI < len(plrSplit); plrI++ {
+			plr := strings.SplitN(plrSplit[plrI], StrfmtDemoCachePlrEnd, 2)[0]
+
+			p := PlrStats{}
+				
+			IsOK := p.fromString(plr)
+			if !IsOK {
+				log.Println("failed to parse " + filepath.Base(demoName) + ".txt" + ": player not found: " + plr)
+				return nil, false
+			}
+
+			dem.PlrsStats = append(dem.PlrsStats, &p)
+		}
+
+		CacheMutex.Lock()
+		defer CacheMutex.Unlock()
+
+		demMem = findDemoInMemByDemoID(DemoID)
+		if demMem != nil {
+			return demMem, true
+		}
+
+		Cache = append(Cache, &dem)
+		return &dem, false
 	}
 	return nil, false
 }
