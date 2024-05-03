@@ -4,7 +4,7 @@ go 1.22.1
 
 require (
 	github.com/jedib0t/go-pretty/v6 v6.5.4
-	github.com/markus-wa/demoinfocs-golang/v4 v4.0.5
+	github.com/markus-wa/demoinfocs-golang/v4 v4.1.3
 	github.com/mholt/archiver/v3 v3.5.1
 )
 
@@ -29,5 +29,5 @@ require (
 	github.com/ulikunitz/xz v0.5.9 // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	golang.org/x/sys v0.16.0 // indirect
-	google.golang.org/protobuf v1.33.0 // indirect
+	google.golang.org/protobuf v1.34.0 // indirect
 )
